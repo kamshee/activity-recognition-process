@@ -21,7 +21,7 @@ if platform.system() == 'Windows':
     if platform.release() == '7':
         path = r'Y:\Inpatient Sensors -Stroke\Data\biostamp_data\controls'
         folder_path = r'Y:\Inpatient Sensors -Stroke\Data\biostamp_data'
-#        dict_path = r'X:\CIS-PD Study\Data_dict'
+        dict_path = r'X:\CIS-PD Study\Data_dict'
 #        scores_path = r'X:\CIS-PD Study\Scores'
 #        features_path = r'X:\CIS-PD Study\FeatureMatrix'
 #else:
@@ -50,11 +50,9 @@ def process_annotations(path):
     del df['AnnotationId']
     del df['AuthorId']
     
-    # subset Activity Recognition data
-    # option 1: match exactly
-    df = df[(df.EventType != 'Activity....')]
-    # option 2: partially match string
+    # subset Activity Recognition data by partially match EventType string
     df = df[df['EventType'].str.match('Activity')]
+    del d1['EventType']
     df.Value = df.Value.shift(-1)
     df = df.dropna()
     trial = ['trial 1','trial 1','trial 1','trial 1','trial 2','trial 1','trial 1','trial 3','trial 2','trial 3','trial 4','trial 2']
@@ -62,13 +60,13 @@ def process_annotations(path):
     
     ##########################################
     # ??? what does this do?
-    sorter = set(df.EventType.unique().flatten())
-    sorterIndex = dict(zip(sorter, range(len(sorter))))        
-    df['EventType_Rank'] = df['EventType'].map(sorterIndex)
-    df['Cycle'] = df.groupby('EventType')['Start Timestamp (ms)'].rank(ascending=True).astype(int)
-    del df['EventType_Rank']
-    df[df['EventType'].str.contains('Heart')] = df[df['EventType'].str.contains('Heart')].replace(to_replace={'Cycle': {1: 'NaN', 2: 'NaN', 3: 'NaN', 4: 'NaN'}})
-    df = df.reset_index(drop=True).set_index('EventType')
+#    sorter = set(df.EventType.unique().flatten())
+#    sorterIndex = dict(zip(sorter, range(len(sorter))))        
+#    df['EventType_Rank'] = df['EventType'].map(sorterIndex)
+#    df['Cycle'] = df.groupby('EventType')['Start Timestamp (ms)'].rank(ascending=True).astype(int)
+#    del df['EventType_Rank']
+#    df[df['EventType'].str.contains('Heart')] = df[df['EventType'].str.contains('Heart')].replace(to_replace={'Cycle': {1: 'NaN', 2: #'NaN', 3: 'NaN', 4: 'NaN'}})
+#    df = df.reset_index(drop=True).set_index('EventType')
     
     # 
     
@@ -79,7 +77,7 @@ def process_annotations(path):
 def  extract_data(SubID, path):
     
 # ??? What's this chunk?
-#    timestamps = process_annotations(path)
+    timestamps = process_annotations(path)
 #    timestamps = fix_errors(SubID, timestamps)
 #    timestamps = add_unstruct_data(timestamps)
     
@@ -500,7 +498,7 @@ errordf.head()
 ## What's this??????
 os.listdir(path + '/1020/anterior_thigh_left/d5la7wz0/')
 
-
+####################################################################
 
 ## Create dictionaries from sensor data from all the subjects
 print(os.listdir(dict_path))
@@ -508,18 +506,8 @@ print(len(os.listdir(dict_path)))
 
 #all subj data files in repository
 d = os.listdir(path)
-f = [filename[0:4] for filename in d if filename.startswith('1')] #need to update to skip existing files in /data
+f = [filename for filename in d if filename.startswith('HC')]
 print(f)
-#existing data dictionary files
-fd = os.listdir(dict_path)
-fd = [x[:4] for x in fd] #ignore FX at end
-print(list(set(f) - set(fd)))
-
-#errors temporarily resolved 10/10/2017, will update later
-# f.remove('1030')
-# f.remove('1032')
-# f.remove('1024')
-# f.remove('1052')
 
 #create data dict for remaining subjects
 data_all = []
