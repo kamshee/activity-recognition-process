@@ -102,22 +102,109 @@ def BPfilter(act_dict,task,loc,cutoff_low=3,cutoff_high=8,order=4):
         xfilt = filtfilt(b,a,x,axis=0)
         rawdatafilt = pd.DataFrame(data=xfilt,index=rawdata.index,columns=rawdata.columns)
         act_dict[task][trial][loc][sensor] = rawdatafilt
+        
+############
+# create function to merge all clips together
+############
+def gen_clips_merged(act_dict,task,location,clipsize=10000,overlap=0.9,verbose=False,startTS=0,endTS=1,
+              len_tol=1.0,resample=False):
+    """
+    Extract clips and merge into 1 clip for accelerometer and gyro data (allows selecting start and end fraction)
+    len_tol is the % of the intended clipsize below which clip is not used
+    
+    :param clipsize 10000 = 10 sec
+    :param overlap=0.9 for 90% overlap b/n clips
+    :param len_tol=1.0, want complete 10 sec clips
+    
+    """
+    
+    clip_data = {} #the dictionary with clips
 
-# modified Andrew's function
+    for trial in act_dict[task].keys():
+        clip_data[trial] = {}
+
+        for s in ['accel','gyro']:
+
+            if verbose:
+                print(task,' sensortype = %s - trial %d'%(s,trial))
+            #create clips and store in a list
+            rawdata = act_dict[task][trial][location][s]
+            if rawdata.empty is True: #skip if no data for current sensor
+                continue
+            #reindex time (relative to start)
+            idx = rawdata.index
+            idx = idx-idx[0]
+            rawdata.index = idx
+            #choose to create clips only on a fraction of the data (0<[startTS,endTS]<1)
+            if (startTS > 0) | (endTS < 1):
+                rawdata = rawdata.iloc[round(startTS*len(rawdata)):round(endTS*len(rawdata)),:]
+                #reindex time (relative to start)
+                idx = rawdata.index
+                idx = idx-idx[0]
+                rawdata.index = idx
+            #create clips data
+            deltat = np.median(np.diff(rawdata.index))
+            clips = []
+            #use entire recording
+            if clipsize == 0:
+                clips.append(rawdata)
+            #take clips
+            else:
+                idx = np.arange(0,rawdata.index[-1],clipsize*(1-overlap))
+                for i in idx:
+                    c = rawdata[(rawdata.index>=i) & (rawdata.index<i+clipsize)]
+                    #keep/append clips that are 10 sec, else discard those that don't meet length
+                    #tolerance
+                    ## changed > to >= so it will keep clip>=10 sec
+                    if len(c) >= len_tol*int(clipsize/deltat):
+                        # try concat instead of append to make one list
+                        # check index, if increases like 0, 32, 64, etc then great, otherwise
+                        # reindex c before extending?
+                        clips.append(c)
+
+            # merge all clips into one
+            # cycle through each list element, reindex
+            if len(clips)>1:
+#                 finalclip = []
+                for x in range(len(clips)):
+                    if x==0:
+                        clips.append(clips[0])
+                    else:
+                        # reindex
+                        idx2 = clips[x].index
+                        idx2 = idx2-idx2[0]+32+clips[x-1].index[-1]
+                        clips[x].index = idx2
+                        # merge into list of dataframes
+                        clips.append(clips[x])
+    
+            # merge into one dataframe
+            oneclip = pd.concat(clips)
+            # reset clips
+            clips = []
+            clips.append(oneclip)
+    
+            #store clip length
+            #store the length of each clip
+            clip_len = [clips[c].index[-1]-clips[c].index[0] for c in range(len(clips))] 
+            #assemble in dict
+            clip_data[trial][s] = {'data':clips, 'clip_len':clip_len}
+
+    return clip_data
+
 def gen_clips(act_dict,task,location,clipsize=10000,overlap=0.9,verbose=False,startTS=0,endTS=1,
               len_tol=1.0,resample=False):
     """
-    Extract clips for accelerometer and gyro data (allows selecting start and end fraction)
+    Extract separate clips for accelerometer and gyro data (allows selecting start and end fraction)
     len_tol is the % of the intended clipsize below which clip is not used
     
-    Default arg changes:
-    - changed clipsize=5000 to 10000 for 10 sec clips
-    - changed overlap=0 to 0.9 for 90% overlap b/n clips
-    - changed len_tol=0.8 to 1.0, discard clips less than 10 sec
-
-    Understand the following args:
-    startTS
-    endTS
+    :param clipsize 10000 = 10 sec
+    :param overlap=0.9 for 90% overlap b/n clips
+    :param len_tol=1.0, want complete 10 sec clips
+    
+    Default arg changes before modification:
+    - clipsize=5000
+    - overlap=0
+    - len_tol=0.8
     """
     
     clip_data = {} #the dictionary with clips
