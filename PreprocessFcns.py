@@ -107,7 +107,7 @@ def BPfilter(act_dict,task,loc,cutoff_low=3,cutoff_high=8,order=4):
 # create function to merge all clips together
 ############
 def gen_clips_merged(act_dict,task,location,clipsize=10000,overlap=0.9,verbose=False,startTS=0,endTS=1,
-              len_tol=1.0,resample=False):
+              len_tol=0.95,resample=False):
     """
     Extract clips and merge into 1 clip for accelerometer and gyro data (allows selecting start and end fraction)
     len_tol is the % of the intended clipsize below which clip is not used
@@ -155,8 +155,8 @@ def gen_clips_merged(act_dict,task,location,clipsize=10000,overlap=0.9,verbose=F
                     c = rawdata[(rawdata.index>=i) & (rawdata.index<i+clipsize)]
                     #keep/append clips that are 10 sec, else discard those that don't meet length
                     #tolerance
-                    ## changed > to >= so it will keep clip>=10 sec
-                    if len(c) >= len_tol*int(clipsize/deltat):
+                    ## clip length tolerance > 9.5 sec
+                    if len(c) > len_tol*int(clipsize/deltat):
                         # try concat instead of append to make one list
                         # check index, if increases like 0, 32, 64, etc then great, otherwise
                         # reindex c before extending?
@@ -178,7 +178,10 @@ def gen_clips_merged(act_dict,task,location,clipsize=10000,overlap=0.9,verbose=F
                         clips.append(clips[x])
     
             # merge into one dataframe
-            oneclip = pd.concat(clips)
+            try:
+                oneclip = pd.concat(clips)
+            except:
+                print('Check len_tol in gen_clips_merged function.')
             # reset clips
             clips = []
             clips.append(oneclip)
