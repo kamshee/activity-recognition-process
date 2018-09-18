@@ -8,7 +8,109 @@ from itertools import product
 from scipy.stats import skew, kurtosis, entropy
 from scipy.signal import butter, welch, filtfilt, resample
 import math
-import nolds
+# import nolds
+from sklearn import preprocessing
+
+def fivesensorfeatures(actdictaccgyr):
+    """
+    Extract features from 5 sensors using accelerometer and gyroscope data.
+    :param actdictaccgyr is one subject's raw data in dataframe format
+    """
+    locations = ['sacrum', 'distal_lateral_shank_right', 'distal_lateral_shank_left',
+                 'posterior_forearm_right', 'posterior_forearm_left']
+    fivesensordf = pd.DataFrame()
+    for task in actdictaccgyr.keys():
+        for location in locations:
+            print('task ',task,' and location ',location)
+            clip_data = gen_clips_merged(actdictaccgyr,task,location,clipsize=10000,verbose=True)
+            feature_extraction131(clip_data)
+            tempdf = aggregateAcc(clip_data)
+
+            ## add task and location as a column
+            tempdf.insert(0, 'task', task)
+            tempdf.insert(1, 'location', location)
+
+            fivesensordf = pd.concat([fivesensordf,tempdf], ignore_index=True)
+            
+    return fivesensordf
+
+def allsensorfeatures(actdictaccgyr):
+    """
+    Extract features from all sensors using accelerometer data only.
+    :param actdictaccgyr is one subject's raw data in dataframe format
+    """
+    locations = ['tibialis_anterior_left', 'gastrocnemius_right', 'sacrum', 'distal_lateral_shank_right', 
+             'tibialis_anterior_right', 'posterior_forearm_right', 'bicep_right', 'rectus_femoris_left', 
+             'biceps_femoris_right', 'posterior_forearm_left', 'biceps_femoris_left', 'gastrocnemius_left', 
+             'bicep_left', 'medial_chest', 'distal_lateral_shank_left', 'rectus_femoris_right']
+    allsensordf = pd.DataFrame()
+    for task in actdictaccgyr.keys():
+        for location in locations:
+            print('task ',task,' and location ',location)
+            clip_data = gen_clips_merged(actdictaccgyr,task,location,clipsize=10000,verbose=True)
+            
+            feature_extraction131(clip_data)
+            tempdf = aggregateAcc(clip_data)
+
+            ## add task and location as a column
+            tempdf.insert(0, 'task', task)
+            tempdf.insert(1, 'location', location)
+
+            allsensordf = pd.concat([allsensordf,tempdf], ignore_index=True)
+            
+    return allsensordf
+
+# aggregates acc and gyro features, combines trial
+# Need to loop through all task and locations and make one dataframe
+def aggregateAccGyroTrial(clip_data):
+    """Take a clip of task/location with extracted ACC/GYR features, 
+    and merge all trials into one dataframe.
+    
+    :param clip_data 
+    """
+    df = pd.DataFrame()
+    for trial in clip_data.keys():
+        
+        try: acc_df = clip_data[trial]['accel']['features']
+        except: 
+            print('no accel data in trial ',trial)
+            acc_df = pd.DataFrame()
+            continue
+        try: gyr_df = clip_data[trial]['gyro']['features']
+        except: 
+            print('no gyro data in trial ',trial)
+            gyr_df = pd.DataFrame()
+            continue
+
+        trialdf = pd.concat([acc_df, gyr_df], axis=1)
+        
+        trialdf.insert(0, 'trial', trial)
+        
+        df = pd.concat([df,trialdf], ignore_index=True) # 0 prob by default
+
+    return df
+
+# aggregates only acc features, combines trials
+# Need to loop through all task and locations and make one dataframe
+def aggregateAcc(clip_data):
+    """Take a clip of task/location with extracted ACC features only, 
+    and merge all trials into one dataframe.
+    
+    :param clip_data 
+    """
+    df = pd.DataFrame()
+    for trial in clip_data.keys():
+        
+        try: acc_df = clip_data[trial]['accel']['features']
+        except: 
+            print('no accel data in trial ',trial)
+            acc_df = pd.DataFrame()
+            continue
+            
+        acc_df.insert(0, 'trial', trial)
+        df = pd.concat([df,acc_df], ignore_index=True) # 0 prob by default
+
+    return df
 
 def feature_extraction131(clip_data):
     """
@@ -477,6 +579,130 @@ def gen_clips(act_dict,task,location,clipsize=10000,overlap=0.9,verbose=False,st
 
     return clip_data
 
+# try making 74 feature list of acc and gyro feat
+def feature_extraction_accgyro(clip_data):
+    """
+    Extract features from both sensors (accel and gyro) for current clips and trials
+    Input: dictionary of clips from each subject
+    Output: feature matrix from all clips from given subject and scores for each clip
+    """
+    
+    features_list = ['RMSX','RMSY','RMSZ','rangeX','rangeY','rangeZ','meanX','meanY','meanZ','varX','varY','varZ',
+                    'skewX','skewY','skewZ','kurtX','kurtY','kurtZ','xcor_peakXY','xcorr_peakXZ','xcorr_peakYZ',
+                    'xcorr_lagXY','xcorr_lagXZ','xcorr_lagYZ','Dom_freq','Pdom_rel','PSD_mean','PSD_std','PSD_skew',
+                    'PSD_kur','jerk_mean','jerk_std','jerk_skew','jerk_kur','Sen_X','Sen_Y','Sen_Z']
+#                     ,'RMS_mag','range_mag',
+#                     'mean_mag','var_mag','skew_mag','kurt_mag','Sen_mag']
+    acclist = [s + '_acc' for s in features_list]
+    gyrlist = [s + '_gyr' for s in features_list]
+
+    for trial in clip_data.keys():
+
+        for sensor in clip_data[trial].keys():
+
+            #cycle through all clips for current trial and save dataframe of features for current trial and sensor
+            features = []
+            for c in range(len(clip_data[trial][sensor]['data'])):
+                rawdata = clip_data[trial][sensor]['data'][c]
+            
+                #acceleration magnitude
+                rawdata_wmag = rawdata.copy()
+                rawdata_wmag['Accel_Mag']=np.sqrt((rawdata**2).sum(axis=1))
+
+                #extract features on current clip
+
+                #Root mean square of signal on each axis
+                N = len(rawdata)
+                RMS = 1/N*np.sqrt(np.asarray(np.sum(rawdata**2,axis=0)))
+
+        #         RMS_mag = 1/N*np.sqrt(np.sum(rawdata_wmag['Accel_Mag']**2,axis=0))
+
+                #range on each axis
+                min_xyz = np.min(rawdata,axis=0)
+                max_xyz = np.max(rawdata,axis=0)
+                r = np.asarray(max_xyz-min_xyz)
+
+        #         r_mag = np.max(rawdata_wmag['Accel_Mag']) - np.min(rawdata_wmag['Accel_Mag'])
+
+                #Moments on each axis
+                mean = np.asarray(np.mean(rawdata,axis=0))
+                var = np.asarray(np.std(rawdata,axis=0))
+                sk = skew(rawdata)
+                kurt = kurtosis(rawdata)
+
+        #         mean_mag = np.mean(rawdata_wmag['Accel_Mag'])
+        #         var_mag = np.std(rawdata_wmag['Accel_Mag'])
+        #         sk_mag = skew(rawdata_wmag['Accel_Mag'])
+        #         kurt_mag = kurtosis(rawdata_wmag['Accel_Mag'])
+
+                #Cross-correlation between axes pairs
+                xcorr_xy = np.correlate(rawdata.iloc[:,0],rawdata.iloc[:,1],mode='same')
+                # xcorr_xy = xcorr_xy/np.abs(np.sum(xcorr_xy)) #normalize values
+                xcorr_peak_xy = np.max(xcorr_xy)
+                xcorr_lag_xy = (np.argmax(xcorr_xy))/len(xcorr_xy) #normalized lag
+
+                xcorr_xz = np.correlate(rawdata.iloc[:,0],rawdata.iloc[:,2],mode='same')
+                # xcorr_xz = xcorr_xz/np.abs(np.sum(xcorr_xz)) #normalize values
+                xcorr_peak_xz = np.max(xcorr_xz)
+                xcorr_lag_xz = (np.argmax(xcorr_xz))/len(xcorr_xz)
+
+                xcorr_yz = np.correlate(rawdata.iloc[:,1],rawdata.iloc[:,2],mode='same')
+                # xcorr_yz = xcorr_yz/np.abs(np.sum(xcorr_yz)) #normalize values
+                xcorr_peak_yz = np.max(xcorr_yz)
+                xcorr_lag_yz = (np.argmax(xcorr_yz))/len(xcorr_yz)
+
+                #pack xcorr features
+                xcorr_peak = np.array([xcorr_peak_xy,xcorr_peak_xz,xcorr_peak_yz])
+                xcorr_lag = np.array([xcorr_lag_xy,xcorr_lag_xz,xcorr_lag_yz])
+
+                #Dominant freq and relative magnitude (on acc magnitude)
+                Pxx = power_spectra_welch(rawdata_wmag,fm=0,fM=10)
+                domfreq = np.asarray([Pxx.iloc[:,-1].idxmax()])
+                Pdom_rel = Pxx.loc[domfreq].iloc[:,-1].values/Pxx.iloc[:,-1].sum() #power at dominant freq rel to total
+
+                #moments of PSD
+                Pxx_moments = np.array([np.nanmean(Pxx.values),np.nanstd(Pxx.values),skew(Pxx.values),kurtosis(Pxx.values)])
+
+                #moments of jerk magnitude
+                jerk = rawdata_wmag['Accel_Mag'].diff().values
+                jerk_moments = np.array([np.nanmean(jerk),np.nanstd(jerk),skew(jerk[~np.isnan(jerk)]),kurtosis(jerk[~np.isnan(jerk)])])
+
+                #sample entropy raw data (magnitude) and FFT
+                sH_raw = []; sH_fft = []
+
+                for a in range(3):
+                    x = rawdata.iloc[:,a]
+                    n = len(x) #number of samples in clip
+                    Fs = np.mean(1/(np.diff(x.index)/1000)) #sampling rate in clip
+                    sH_raw.append(nolds.sampen(x)) #samp entr raw data
+                    #for now disable SH on fft
+                    # f,Pxx_den = welch(x,Fs,nperseg=min(256,n/4))
+                    # sH_fft.append(nolds.sampen(Pxx_den)) #samp entr fft
+
+                sH_mag = nolds.sampen(rawdata_wmag['Accel_Mag'])
+
+                #Assemble features in array
+        #         Y = np.array([RMS_mag,r_mag,mean_mag,var_mag,sk_mag,kurt_mag,sH_mag])
+                X = np.concatenate((RMS,r,mean,var,sk,kurt,xcorr_peak,xcorr_lag,domfreq,Pdom_rel,Pxx_moments,jerk_moments,sH_raw)) #,Y))
+                features.append(X)
+
+            F = np.asarray(features) #feature matrix for all clips from current trial
+        #     clip_data['features'] = pd.DataFrame(data=F,columns=features_list,dtype='float32')
+        
+            # add condition of sensor
+            if sensor == 'accel':
+                column_list=acclist
+                clip_data[trial]['features'] = pd.DataFrame(data=F,columns=column_list,dtype='float32')
+            else:
+                column_list=gyrlist
+                # Need to concat on columns
+                df_to_append = pd.DataFrame(data=F,columns=column_list,dtype='float32')
+                clip_data[trial]['features'] = pd.concat([clip_data[trial]['features'], df_to_append],ignore_index=True,axis=1)
+                # option 2 just change feature names to gyr
+                clip_data[trial]['features'] = df_to_append = pd.DataFrame(data=F,columns=column_list,dtype='float32')
+
+#     return clip_data #not necessary
+
 # used function 
 def feature_extraction(clip_data):
     """
@@ -587,7 +813,126 @@ def feature_extraction(clip_data):
             clip_data[trial][sensor]['features'] = pd.DataFrame(data=F,columns=features_list,dtype='float32')
 
 #     return clip_data #not necessary
+
+# This was modified for PD study feature extraction
+# different col names for acc and gyro
+def feature_extraction2(clip_data):
+    """
+    Extract features from both sensors (accel and gyro) for current clips and trials
+    Input: dictionary of clips from each subject
+    Output: feature matrix from all clips from given subject and scores for each clip
+    """
     
+    features_list = ['RMSX','RMSY','RMSZ','rangeX','rangeY','rangeZ','meanX','meanY','meanZ','varX','varY','varZ',
+                    'skewX','skewY','skewZ','kurtX','kurtY','kurtZ','xcor_peakXY','xcorr_peakXZ','xcorr_peakYZ',
+                    'xcorr_lagXY','xcorr_lagXZ','xcorr_lagYZ','Dom_freq','Pdom_rel','PSD_mean','PSD_std','PSD_skew',
+                    'PSD_kur','jerk_mean','jerk_std','jerk_skew','jerk_kur','Sen_X','Sen_Y','Sen_Z']
+#                     ,'RMS_mag','range_mag',
+#                     'mean_mag','var_mag','skew_mag','kurt_mag','Sen_mag']
+    acclist = [s + '_acc' for s in features_list]
+    gyrlist = [s + '_gyr' for s in features_list]
+
+    for trial in clip_data.keys():
+
+        for sensor in clip_data[trial].keys():
+
+            #cycle through all clips for current trial and save dataframe of features for current trial and sensor
+            features = []
+            for c in range(len(clip_data[trial][sensor]['data'])):
+                rawdata = clip_data[trial][sensor]['data'][c]
+            
+                #acceleration magnitude
+                rawdata_wmag = rawdata.copy()
+                rawdata_wmag['Accel_Mag']=np.sqrt((rawdata**2).sum(axis=1))
+
+                #extract features on current clip
+
+                #Root mean square of signal on each axis
+                N = len(rawdata)
+                RMS = 1/N*np.sqrt(np.asarray(np.sum(rawdata**2,axis=0)))
+
+        #         RMS_mag = 1/N*np.sqrt(np.sum(rawdata_wmag['Accel_Mag']**2,axis=0))
+
+                #range on each axis
+                min_xyz = np.min(rawdata,axis=0)
+                max_xyz = np.max(rawdata,axis=0)
+                r = np.asarray(max_xyz-min_xyz)
+
+        #         r_mag = np.max(rawdata_wmag['Accel_Mag']) - np.min(rawdata_wmag['Accel_Mag'])
+
+                #Moments on each axis
+                mean = np.asarray(np.mean(rawdata,axis=0))
+                var = np.asarray(np.std(rawdata,axis=0))
+                sk = skew(rawdata)
+                kurt = kurtosis(rawdata)
+
+        #         mean_mag = np.mean(rawdata_wmag['Accel_Mag'])
+        #         var_mag = np.std(rawdata_wmag['Accel_Mag'])
+        #         sk_mag = skew(rawdata_wmag['Accel_Mag'])
+        #         kurt_mag = kurtosis(rawdata_wmag['Accel_Mag'])
+
+                #Cross-correlation between axes pairs
+                xcorr_xy = np.correlate(rawdata.iloc[:,0],rawdata.iloc[:,1],mode='same')
+                # xcorr_xy = xcorr_xy/np.abs(np.sum(xcorr_xy)) #normalize values
+                xcorr_peak_xy = np.max(xcorr_xy)
+                xcorr_lag_xy = (np.argmax(xcorr_xy))/len(xcorr_xy) #normalized lag
+
+                xcorr_xz = np.correlate(rawdata.iloc[:,0],rawdata.iloc[:,2],mode='same')
+                # xcorr_xz = xcorr_xz/np.abs(np.sum(xcorr_xz)) #normalize values
+                xcorr_peak_xz = np.max(xcorr_xz)
+                xcorr_lag_xz = (np.argmax(xcorr_xz))/len(xcorr_xz)
+
+                xcorr_yz = np.correlate(rawdata.iloc[:,1],rawdata.iloc[:,2],mode='same')
+                # xcorr_yz = xcorr_yz/np.abs(np.sum(xcorr_yz)) #normalize values
+                xcorr_peak_yz = np.max(xcorr_yz)
+                xcorr_lag_yz = (np.argmax(xcorr_yz))/len(xcorr_yz)
+
+                #pack xcorr features
+                xcorr_peak = np.array([xcorr_peak_xy,xcorr_peak_xz,xcorr_peak_yz])
+                xcorr_lag = np.array([xcorr_lag_xy,xcorr_lag_xz,xcorr_lag_yz])
+
+                #Dominant freq and relative magnitude (on acc magnitude)
+                Pxx = power_spectra_welch(rawdata_wmag,fm=0,fM=10)
+                domfreq = np.asarray([Pxx.iloc[:,-1].idxmax()])
+                Pdom_rel = Pxx.loc[domfreq].iloc[:,-1].values/Pxx.iloc[:,-1].sum() #power at dominant freq rel to total
+
+                #moments of PSD
+                Pxx_moments = np.array([np.nanmean(Pxx.values),np.nanstd(Pxx.values),skew(Pxx.values),kurtosis(Pxx.values)])
+
+                #moments of jerk magnitude
+                jerk = rawdata_wmag['Accel_Mag'].diff().values
+                jerk_moments = np.array([np.nanmean(jerk),np.nanstd(jerk),skew(jerk[~np.isnan(jerk)]),kurtosis(jerk[~np.isnan(jerk)])])
+
+                #sample entropy raw data (magnitude) and FFT
+                sH_raw = []; sH_fft = []
+
+                for a in range(3):
+                    x = rawdata.iloc[:,a]
+                    n = len(x) #number of samples in clip
+                    Fs = np.mean(1/(np.diff(x.index)/1000)) #sampling rate in clip
+                    sH_raw.append(nolds.sampen(x)) #samp entr raw data
+                    #for now disable SH on fft
+                    # f,Pxx_den = welch(x,Fs,nperseg=min(256,n/4))
+                    # sH_fft.append(nolds.sampen(Pxx_den)) #samp entr fft
+
+                sH_mag = nolds.sampen(rawdata_wmag['Accel_Mag'])
+
+                #Assemble features in array
+        #         Y = np.array([RMS_mag,r_mag,mean_mag,var_mag,sk_mag,kurt_mag,sH_mag])
+                X = np.concatenate((RMS,r,mean,var,sk,kurt,xcorr_peak,xcorr_lag,domfreq,Pdom_rel,Pxx_moments,jerk_moments,sH_raw)) #,Y))
+                features.append(X)
+
+            F = np.asarray(features) #feature matrix for all clips from current trial
+        #     clip_data['features'] = pd.DataFrame(data=F,columns=features_list,dtype='float32')
+            if sensor == 'accel': columns_list = acclist
+            else: columns_list = gyrlist
+            try:
+                clip_data[trial][sensor]['features'] = pd.DataFrame(data=F,columns=columns_list,dtype='float32')
+            except:
+                print('Empty data in feature_extraction2')
+                continue
+#     return clip_data #not necessary
+
 def feature_extraction_reduced(clip_data):
 
     features_list = ['RMSX','RMSY','RMSZ','rangeX','rangeY','rangeZ','meanX','meanY','meanZ','varX','varY','varZ',
