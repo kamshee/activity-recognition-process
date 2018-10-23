@@ -243,3 +243,48 @@ def featuretest(clip_data):
 
     return features
 
+def feature_extraction(df, sensor_type='accel'):
+    """
+    This function takes a dataframe with metadata and raw data from IMU,
+    filters out accelerometer or gyroscope sensor data from all locations, 
+    then extracts 131 features for each trial.
+    
+    Input: 
+    df - Flattened dataframe with task, trial, location, sensor, and IMU raw data
+    sensor_type - Specifies 'accel' for accelerometer and 'gyro' for gyroscope sensor type.
+        Default is 'accel'.
+    
+    Output:
+    acceldf - Dataframe with metadata, raw data and features
+    """
+    # filter accelerometer data
+    acceldf = df.loc[df.sensor == sensor_type]
+    acceldf.reset_index(drop=True, inplace=True)
+
+    # drop empty dataframes by using len=0 condition
+    acceldf = acceldf[acceldf.rawdata.map(lambda d: len(d)) > 0]
+    # reset index
+    acceldf.reset_index(drop=True, inplace=True)
+
+    features = pd.DataFrame()
+    for ind, val in enumerate(acceldf.rawdata):
+        trialfeature = featuretest(val)
+        features = features.append(trialfeature, ignore_index=True)
+    # concat features to meta/raw data
+    acceldf = pd.concat([acceldf,features], axis=1)#, ignore_index=True)
+    
+    return acceldf
+
+def subset_5_locations(df):
+    """This function takes a df and subsets 5 locations before acc/gyr feature extraction."""
+    # acc/gyr locations
+    locations = ['sacrum', 'distal_lateral_shank_right', 'distal_lateral_shank_left',
+                 'posterior_forearm_right', 'posterior_forearm_left']
+
+    # subset 5 locations
+    df = df[df.location.isin(locations)]
+    
+    # remove elec sensor
+    df = df.loc[df.sensor != 'elec']
+    
+    return df
