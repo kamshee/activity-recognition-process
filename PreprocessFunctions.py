@@ -245,6 +245,86 @@ def featuretest(clip_data):
 
 def feature_extraction(df, sensor_type='accel'):
     """
+    This function takes a dataframe with metadata and raw data from IMUs,
+    filters out accelerometer or gyroscope sensor data from specified locations, 
+    then extracts 131 features for each trial.
+    
+    Input: 
+    df - Flattened dataframe with task, trial, location, sensor, and IMU raw data
+    sensor_type -   'accel' for accelerometer sensor data only
+                    'both' for accelerometer and gyroscope sensor data
+                    Default is 'accel'.
+    
+    Output:
+    df_feature - Dataframe with metadata, raw data and features
+    """
+    # filter accelerometer data
+    if sensor_type=='accel':
+        df_feature = df.loc[df.sensor == sensor_type]
+    # else filter accelerometer and gyro data
+    else:
+        # acc/gyr locations
+        locations = ['sacrum', 'distal_lateral_shank_right', 'distal_lateral_shank_left',
+                     'posterior_forearm_right', 'posterior_forearm_left']
+        # subset 5 locations
+        df_feature = df[df.location.isin(locations)]
+        df_feature = df_feature.loc[df_feature.sensor != 'elec']
+        
+    # drop empty dataframes by using len=0 condition
+    df_feature = df_feature[df_feature.rawdata.map(lambda d: len(d)) > 0]
+    # reset index
+    df_feature.reset_index(drop=True, inplace=True)
+
+    features = pd.DataFrame()
+    for ind, val in enumerate(df_feature.rawdata):
+        trialfeature = featuretest(val)
+        features = features.append(trialfeature, ignore_index=True)
+    # concat features to meta/raw data
+    df_feature = pd.concat([df_feature,features], axis=1)#, ignore_index=True)
+    
+    return df_feature
+
+def rearrange_accgyr_features(df):
+    """
+    This function takes a dataframe with accelerometer and gyroscope features
+    on alternating rows, relabels feature names with prefix acc- or gyr- for
+    accelerometer or gyroscope data respectively.
+    This prepares the feature matrix for scikit-learn modeling.
+    
+    Input: 
+    df - Dataframe with metadata, raw data, and acc/gyr features on alternating rows.
+    
+    Output:
+    feature_matrix - Dataframe with acc and gyr features relabeled and concatenated horizontally.
+    """   
+    # try separatig acc and gyr df instead
+    acc_df = df.loc[df.sensor == 'accel'].copy()
+    gyr_df = df.loc[df.sensor == 'gyro'].copy()
+  
+    # rename feature columns with prefix to specify acc- or gyr- rawdata and features
+    new_names_acc = [(i, 'acc-'+i) for i in acc_df.iloc[:, 7:].columns.values]
+    acc_df.rename(columns = dict(new_names_acc), inplace=True)
+    new_names_gyr = [(i, 'gyr-'+i) for i in gyr_df.iloc[:, 7:].columns.values]
+    gyr_df.rename(columns = dict(new_names_gyr), inplace=True)
+
+    # delete sensor column
+    acc_df = acc_df.drop('sensor', 1)
+    gyr_df = gyr_df.drop('sensor', 1)
+    
+    # merge acc and gyr features using task, trial, location as keys
+    final_df = pd.merge(acc_df, gyr_df, on=['subject','date','test','task','trial','location'])
+    
+    # move gyr-rawdata column next to acc-rawdata to keep feature matrix to the right side
+    colnames = final_df.columns.tolist()
+    neworder = colnames[:7] + colnames[138:139] + colnames[7:138] + colnames[139:]
+    final_df = final_df[neworder]
+    
+    return final_df
+
+##########################################################
+# OMIT? - incorporate sensor type in feature_extraction()
+def feature_extraction_accel(df, sensor_type='accel'):
+    """
     This function takes a dataframe with metadata and raw data from IMU,
     filters out accelerometer or gyroscope sensor data from all locations, 
     then extracts 131 features for each trial.
@@ -275,6 +355,8 @@ def feature_extraction(df, sensor_type='accel'):
     
     return acceldf
 
+#################################################
+# OMIT? - incorporated into feature_extraction
 def subset_5_locations(df):
     """This function takes a df and subsets 5 locations before acc/gyr feature extraction."""
     # acc/gyr locations
