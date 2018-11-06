@@ -1,6 +1,152 @@
 # These functions are based on the unstacked activity dictionary dataframe
 
 # import packages
+# import pandas as pd
+
+def process_annotations(path):
+    """
+    Processes raw annotations file to extract start / end timestamps and remove unnecessary data
+    Inputs:  path - filepath of the subject folder containing annotations.csv
+    Outputs: df - dataframe containing list of activities and their start / end timestamps
+    """
+    df = pd.read_csv(os.path.join(path, 'annotations.csv'))
+    del df['Timestamp (ms)']
+    del df['AnnotationId']
+    del df['AuthorId']
+    
+    # subset Activity Recognition data by partially match EventType string
+    df = df[df['EventType'].str.match('Activity')]
+    del df['EventType']
+    df.Value = df.Value.shift(-1)
+    df = df.dropna()
+    
+    # Create Trial column for Value
+    sorter = set(df.Value.unique().flatten())
+    sorterIndex = dict(zip(sorter, range(len(sorter))))        
+    df['Value_Rank'] = df['Value'].map(sorterIndex)
+    df['Trial'] = df.groupby('Value')['Start Timestamp (ms)'].rank(ascending=True).astype(int)
+    del df['Value_Rank']
+    df = df.reset_index(drop=True).set_index('Value')
+    
+    return df
+
+def extract_data(SubID, path):
+    """
+    For a given subject, extracts and separates accelerometer, gyroscope, and 
+    EMG/ECG data into trials and sensor per activity
+    """
+    ## This is the annotations.csv dataset cleaned
+    ## Used to match timestamp ranges to the accel, gyro, elec data
+    timestamps = process_annotations(path)
+#    timestamps = fix_errors(SubID, timestamps)
+#    timestamps = add_unstruct_data(timestamps)
+    
+    # Creates list of sensor locations from folders within subject's raw data directory
+    locations = [locs for locs in os.listdir(path) if os.path.isdir(os.path.join(path, locs))]
+    
+    # Creates dictionary of empty dataframes to merge all accelerometer, gyroscope, and EMG/ECG data for each sensor
+    accel = {locs: pd.DataFrame() for locs in locations}
+    gyro = {locs: pd.DataFrame() for locs in locations}
+    elec = {locs: pd.DataFrame() for locs in locations}
+    
+    # Finds and merges all accelerometer, gyroscope, and EMG/ECG data for each sensor, retains datetime information
+    for root, dirs, files in os.walk(path, topdown=True):
+        for filenames in files:
+            if filenames.endswith('accel.csv'):
+                p = pathlib.Path(os.path.join(root, filenames))
+                location = str(p.relative_to(path)).split("\\")[0]
+                temp_df = pd.read_csv(p).set_index('Timestamp (ms)')
+                accel[location] = accel[location].append(temp_df)
+
+            elif filenames.endswith('gyro.csv'):
+                p = pathlib.Path(os.path.join(root, filenames))
+                location = str(p.relative_to(path)).split("\\")[0]
+                temp_df = pd.read_csv(p).set_index('Timestamp (ms)')
+                gyro[location] = gyro[location].append(temp_df)
+
+            elif filenames.endswith('elec.csv'):
+                p = pathlib.Path(os.path.join(root, filenames))
+                location = str(p.relative_to(path)).split("\\")[0]
+                temp_df = pd.read_csv(p).set_index('Timestamp (ms)')
+                elec[location] = elec[location].append(temp_df)
+                
+    # List based on Value data of Activity Recognition
+    complete= list(['LYING','SITTING','STANDING','WALKING','STAIRS DOWN','STAIRS UP'])
+    complete_acts = complete
+    
+    # Complete dictionary of all activities
+    act_dict = {acts: pd.DataFrame() for acts in complete_acts}
+    
+    # Populate dictionary keys per activity with every iteration / trial
+    for activities in complete_acts:
+        
+        startSize = timestamps.loc[activities, 'Start Timestamp (ms)']
+        
+        if np.size(startSize) == 1:
+            startTimestamp = timestamps.loc[activities, 'Start Timestamp (ms)']
+            endTimestamp = timestamps.loc[activities, 'Stop Timestamp (ms)']
+        else:
+            startTimestamp = timestamps.loc[activities, 'Start Timestamp (ms)'].values
+            endTimestamp = timestamps.loc[activities, 'Stop Timestamp (ms)'].values
+
+        # Create trial dictionary with each key containing all sensor data related with each activity's trial
+        trial_dict = {trials: pd.DataFrame() for trials in range(0, np.size(startTimestamp))}
+
+        # Populate trial directory keys
+        for trials in range(0, np.size(startTimestamp)):
+
+            if np.size(startSize) == 1:
+                startTime = startTimestamp
+                endTime = endTimestamp
+            else:
+                startTime = startTimestamp[trials]
+                endTime = endTimestamp[trials]
+
+            # Create sensor location dictionary with each key corresponding to sensor locations
+            sensor_dict = {locs: pd.DataFrame() for locs in locations}
+
+            # Extract sensor data and populate sensor_dict with sensor data
+            for location in locations:
+
+                data = {'accel': pd.DataFrame(), 'gyro': pd.DataFrame(), 'elec': pd.DataFrame()}
+
+                if not accel[location].empty:
+                    accelData = accel[location]
+                    data['accel'] = accelData[(accelData.index >= startTime) & (accelData.index <= endTime)]  
+ 
+                if not gyro[location].empty:
+                    gyroData = gyro[location]
+                    data['gyro'] = gyroData[(gyroData.index >= startTime) & (gyroData.index <= endTime)]
+                   
+                if not elec[location].empty:
+                    elecData = elec[location]
+                    data['elec'] = elecData[(elecData.index >= startTime) & (elecData.index <= endTime)]
+                   
+                sensor_dict[location] = data
+
+            trial_dict[trials] = sensor_dict
+
+        act_dict[activities] = trial_dict
+    
+    return act_dict, timestamps
+
+def extract_date_from_timestamp(timestamp):
+    """
+    Convert UNIX to Timestamp data type and cleanup timestamp dataframe
+    Input: Dataframe with timestamp annotations in UNIX time in milliseconds
+    Output: Dataframe with tasks
+    """
+    timestamp.reset_index(inplace=True)
+    timestamp.insert(1,'date',pd.to_datetime(timestamp['Start Timestamp (ms)'], unit='ms'))
+    timestamp.drop(timestamp.columns[[2,3]], inplace=True, axis=1)
+    # adjust trial number to start from 0
+    timestamp.Trial = timestamp.Trial - 1
+    # keep date only in date column
+    timestamp.date = timestamp.date.dt.date
+    # rename columns
+    timestamp.rename(index=str, columns={'Value':'task', 'Trial':'trial'}, inplace=True)
+    
+    return timestamp
 
 def unstack_ar_dictionary(act_dict):
     """Takes a 4-level nested dictionary and unstacks into a activity recognition dataframe."""
@@ -9,6 +155,55 @@ def unstack_ar_dictionary(act_dict):
                            for k3, k4v in k34v.items()
                            for k4, v in k4v.items()])
     df.columns = ['task','trial','location','sensor','rawdata']
+    return df
+
+def onesubject_meta_raw(dictionary_path, annotation_path, subj):
+    """
+    Combines the metadata and rawdata into a dataframe before filtering and feature extraction.
+    The selected subject's pickle file containing nested dictionary of raw AR data is loaded.
+    The dates from the annotation file are added to the final dataframe's metadata.
+    
+    Functions called:
+    process_annotations()
+    extract_date_from_timestamp()
+    unstack_ar_dictionary()
+    
+    Input:
+    dictionary_path - path that contains the raw data with metadata in nested dictionary format
+    annotation_path - path that holds the annotation timestamps that contains the date metadata
+    subj - 4 character string ID for subject
+    
+    Output: Dataframe with metadata (subject, date, test, task, trial, location, sensor)
+        and raw data. This dataframe is ready for filtering and feature extraction.
+     
+    Example: 
+    dictionary_path = r'//FS2.smpp.local\RTO\Inpatient Sensors -Stroke\Data\biostamp_data\Data_dict'
+    annotation_path = r'//FS2.smpp.local\RTO\Inpatient Sensors -Stroke\Data\biostamp_data\controls'
+    subj = 'HC02'
+    df = onesubject_meta_raw(dictionary_path, annotation_path, subj)
+    """
+    # use context manager to reload pickle file
+    filename = os.path.join(dictionary_path, subj + 'dict.pkl')
+    with open(filename,'rb') as filename:
+        act_dict = pickle.load(filename)
+
+    # get timestamp info for feature matrix
+    subject_annotation_path = os.path.join(annotation_path, subj)
+    timestamp = process_annotations(subject_annotation_path)
+    timestamp = extract_date_from_timestamp(timestamp)
+
+    # unstack nested dictionary structure
+    df = unstack_ar_dictionary(act_dict)
+    # add metadata
+    df.insert(0,'subject',subj)
+    df.insert(1,'test','activity recognition')
+    # merge date data from timestamps
+    df = pd.merge(df, timestamp, on=['task','trial'])
+    # move date column to 2nd column position
+    cols = list(df)
+    cols.insert(1, cols.pop(cols.index('date')))
+    df = df.loc[:, cols]
+    
     return df
 
 def power_spectra_welch_axis(rawdata,fm,fM):
@@ -68,7 +263,6 @@ def HPfilter_testclip(clip_data,cutoff=0.75,ftype='highpass'):
     clip_data = rawdatafilt
     return clip_data
 
-
 def featuretest(clip_data):
     """
     Extract features from a simple clip of a single trial and sensor
@@ -116,7 +310,6 @@ def featuretest(clip_data):
                      'meanpower_bin9_z','meanpower_bin10_z','meanpower_bin11_z','meanpower_bin12_z',
                      'meanpower_bin13_z','meanpower_bin14_z','meanpower_bin15_z','meanpower_bin16_z',
                      'meanpower_bin17_z','meanpower_bin18_z','meanpower_bin19_z','meanpower_bin20_z',]
-
 
     #cycle through all clips for current trial and save dataframe of features for current trial and sensor
     features = []
@@ -321,7 +514,12 @@ def rearrange_accgyr_features(df):
     
     return final_df
 
-##########################################################
+
+
+
+########################################################## OMIT
+########################################################## OMIT
+########################################################## OMIT
 # OMIT? - incorporate sensor type in feature_extraction()
 def feature_extraction_accel(df, sensor_type='accel'):
     """
